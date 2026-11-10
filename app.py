@@ -2,198 +2,198 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.ensemble import IsolationForest
 
+# --------------------------------
+# NEX GUARD - AI FRAUD DETECTION
+# Interactive educational prototype
+# --------------------------------
+
 st.set_page_config(
-    page_title="NexGuard Fraud Detection",
+    page_title="NEX GUARD",
     page_icon="🛡️",
     layout="wide"
 )
 
-# -----------------------------
-# 1. Generate sample transactions
-# -----------------------------
-np.random.seed(42)
+FEATURES = ["amount", "transactions_per_hour", "distance_from_usual_km"]
 
-normal = pd.DataFrame({
-    "amount": np.random.uniform(10, 5000, 200),
-    "transactions_per_hour": np.random.randint(1, 4, 200),
-    "distance_from_usual_km": np.random.uniform(0, 30, 200)
-})
 
-unusual = pd.DataFrame({
-    "amount": np.random.uniform(10000, 50000, 10),
-    "transactions_per_hour": np.random.randint(8, 15, 10),
-    "distance_from_usual_km": np.random.uniform(100, 1000, 10)
-})
+@st.cache_data
+def create_sample_data():
+    """Create simulated transactions for the dashboard and model demo."""
+    rng = np.random.default_rng(42)
 
-transactions = pd.concat(
-    [normal, unusual],
-    ignore_index=True
-)
+    normal = pd.DataFrame({
+        "amount": rng.normal(1500, 500, 200).clip(100),
+        "transactions_per_hour": rng.poisson(1, 200),
+        "distance_from_usual_km": rng.normal(5, 3, 200).clip(0)
+    })
 
-# -----------------------------
-# 2. Train AI model
-# -----------------------------
-model = IsolationForest(
-    contamination=0.05,
-    random_state=42
-)
+    unusual = pd.DataFrame({
+        "amount": rng.uniform(20000, 100000, 10),
+        "transactions_per_hour": rng.integers(8, 20, 10),
+        "distance_from_usual_km": rng.uniform(100, 1000, 10)
+    })
 
-model.fit(transactions)
+    data = pd.concat([normal, unusual], ignore_index=True)
+    data.insert(0, "Transaction_ID", [f"TXN-{i:03d}" for i in range(1, len(data) + 1)])
+    return data
 
-transactions["AI_Result"] = model.predict(transactions)
 
-transactions["Status"] = transactions["AI_Result"].map({
-    1: "Normal",
-    -1: "Suspicious"
-})
+@st.cache_resource
+def train_model():
+    """Train the demo anomaly detector on the simulated transaction set."""
+    training_data = create_sample_data()
+    model = IsolationForest(contamination=0.05, random_state=42)
+    model.fit(training_data[FEATURES])
+    return model
 
-# -----------------------------
-# 3. Dashboard heading
-# -----------------------------
+
+transactions = create_sample_data().copy()
+model = train_model()
+
+# Score the sample transactions for the dashboard.
+transactions["AI_Result"] = model.predict(transactions[FEATURES])
+transactions["Status"] = transactions["AI_Result"].map({1: "Normal", -1: "Suspicious"})
+transactions["AI_Score"] = model.decision_function(transactions[FEATURES])
+
+# Store manually tested transactions for this browser session.
+if "tested_transactions" not in st.session_state:
+    st.session_state.tested_transactions = []
+
 st.title("🛡️ NEX GUARD")
 st.subheader("AI-Powered Banking Fraud Detection System")
-
 st.write(
-    "Monitor financial transactions and identify "
-    "unusual activity using machine learning."
+    "Monitor financial transactions and identify unusual activity using "
+    "machine learning. You can also enter a transaction below and test it."
 )
+st.caption("Prototype note: this version uses simulated training data and is for demonstration, not real banking decisions.")
+st.divider()
 
-# -----------------------------
-# 4. Dashboard metrics
-# -----------------------------
-total = len(transactions)
-suspicious_count = (transactions["Status"] == "Suspicious").sum()
-normal_count = (transactions["Status"] == "Normal").sum()
+# Dashboard metrics
+sample_total = len(transactions)
+sample_suspicious = int((transactions["Status"] == "Suspicious").sum())
+sample_normal = int((transactions["Status"] == "Normal").sum())
 
 col1, col2, col3 = st.columns(3)
+col1.metric("Sample Transactions", sample_total)
+col2.metric("Sample Flagged", sample_suspicious)
+col3.metric("Sample Normal", sample_normal)
 
-col1.metric("Total Transactions", total)
-col2.metric("Suspicious Transactions", suspicious_count)
-col3.metric("Normal Transactions", normal_count)
-
-# -----------------------------
-# 5. Transaction analysis graph
-# -----------------------------
 st.divider()
-st.subheader("Transaction Analysis")
 
-counts = transactions["Status"].value_counts()
-
-fig, ax = plt.subplots()
-counts.plot(kind="bar", ax=ax)
-
-ax.set_xlabel("Transaction Status")
-ax.set_ylabel("Number of Transactions")
-ax.set_title("Normal vs Suspicious Transactions")
-
-st.pyplot(fig)
-plt.close(fig)
-
-# -----------------------------
-# 6. INTERACTIVE TRANSACTION TEST
-# -----------------------------
-st.divider()
+# Interactive transaction test
 st.header("🧪 Test a Transaction")
+st.write("Enter the transaction details, then select **Check Transaction**.")
 
-st.write(
-    "Enter transaction details below to see how "
-    "the AI model classifies a new transaction."
-)
-
-with st.form("transaction_test"):
-
+with st.form("transaction_test_form"):
     amount = st.number_input(
-        "Transaction Amount (KSh)",
+        "Transaction amount (KSh)",
         min_value=1.0,
-        value=2000.0,
+        max_value=10000000.0,
+        value=1500.0,
         step=100.0
     )
-
     frequency = st.number_input(
-        "Transactions per Hour",
-        min_value=1,
-        value=2,
+        "Number of transactions in the last hour",
+        min_value=0,
+        max_value=500,
+        value=1,
         step=1
     )
-
     distance = st.number_input(
-        "Distance from Usual Location (km)",
+        "Distance from the customer's usual location (km)",
         min_value=0.0,
+        max_value=20000.0,
         value=5.0,
         step=1.0
     )
+    submitted = st.form_submit_button("🔍 Check Transaction", use_container_width=True)
 
-    test_button = st.form_submit_button(
-        "Analyse Transaction"
-    )
+if submitted:
+    new_transaction = pd.DataFrame([{
+        "amount": amount,
+        "transactions_per_hour": frequency,
+        "distance_from_usual_km": distance
+    }])
+    prediction = int(model.predict(new_transaction[FEATURES])[0])
+    score = float(model.decision_function(new_transaction[FEATURES])[0])
+    status = "Suspicious" if prediction == -1 else "Normal"
+    transaction_id = f"TEST-{len(st.session_state.tested_transactions) + 1:03d}"
 
-if test_button:
+    result = {
+        "Transaction_ID": transaction_id,
+        "amount": float(amount),
+        "transactions_per_hour": int(frequency),
+        "distance_from_usual_km": float(distance),
+        "Status": status,
+        "AI_Score": score
+    }
+    st.session_state.tested_transactions.insert(0, result)
 
-    new_transaction = pd.DataFrame({
-        "amount": [amount],
-        "transactions_per_hour": [frequency],
-        "distance_from_usual_km": [distance]
-    })
-
-    prediction = model.predict(new_transaction)[0]
-
-    if prediction == -1:
-        st.error(
-            "⚠️ SUSPICIOUS TRANSACTION: "
-            "The AI has identified unusual activity."
-        )
-        st.write(
-            "This transaction should be reviewed "
-            "before any decision is made."
-        )
-
+    if status == "Suspicious":
+        st.error("⚠️ NexGuard has flagged this transaction as suspicious.")
     else:
-        st.success(
-            "✅ NORMAL TRANSACTION: "
-            "The AI has not identified unusual activity."
-        )
+        st.success("✅ NexGuard has classified this transaction as normal.")
 
-    st.write("Transaction details:")
-    st.dataframe(new_transaction, use_container_width=True)
+    st.metric("AI anomaly score", f"{score:.4f}")
+    st.caption(
+        "The anomaly score is a model score, not a fraud probability. "
+        "Lower scores indicate more unusual patterns for this model."
+    )
+    st.dataframe(pd.DataFrame([result]), use_container_width=True, hide_index=True)
 
-# -----------------------------
-# 7. Suspicious transactions
-# -----------------------------
+# Previously tested transactions
+st.subheader("Your Test History")
+if st.session_state.tested_transactions:
+    tested_df = pd.DataFrame(st.session_state.tested_transactions)
+    st.dataframe(tested_df, use_container_width=True, hide_index=True)
+    test_csv = tested_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Test History (CSV)",
+        data=test_csv,
+        file_name="NexGuard_Test_History.csv",
+        mime="text/csv"
+    )
+    if st.button("Clear Test History"):
+        st.session_state.tested_transactions = []
+        st.rerun()
+else:
+    st.info("No transactions tested yet. Enter details above to begin.")
+
 st.divider()
-st.subheader("Suspicious Transactions")
 
-suspicious = transactions[
-    transactions["Status"] == "Suspicious"
-]
+# Sample transaction analysis
+st.header("📊 Sample Transaction Analysis")
+chart_data = transactions["Status"].value_counts()
+st.bar_chart(chart_data)
 
-st.dataframe(
-    suspicious,
-    use_container_width=True
-)
+st.subheader("⚠️ Sample Suspicious Transaction Alerts")
+suspicious = transactions[transactions["Status"] == "Suspicious"]
+st.dataframe(suspicious, use_container_width=True, hide_index=True)
 
-# -----------------------------
-# 8. Download results
-# -----------------------------
-csv = transactions.to_csv(index=False).encode("utf-8")
+st.subheader("All Sample Transaction Records")
+status_filter = st.selectbox("Filter sample transactions", ["All", "Normal", "Suspicious"])
+if status_filter == "All":
+    filtered = transactions
+else:
+    filtered = transactions[transactions["Status"] == status_filter]
 
+st.dataframe(filtered, use_container_width=True, hide_index=True)
+
+sample_csv = filtered.to_csv(index=False).encode("utf-8")
 st.download_button(
-    label="Download Transaction Results",
-    data=csv,
-    file_name="NexGuard_Results.csv",
+    label="Download Sample Transaction Report",
+    data=sample_csv,
+    file_name="NexGuard_Sample_Fraud_Report.csv",
     mime="text/csv"
 )
 
-# -----------------------------
-# 9. Disclaimer
-# -----------------------------
 st.divider()
-
-st.caption(
-    "NexGuard is an educational prototype using "
-    "simulated transaction data. An anomaly does not "
-    "necessarily mean fraud. Real transactions require "
-    "further investigation."
+st.info(
+    "Important: NexGuard is an educational prototype using simulated transactions. "
+    "A suspicious flag means the transaction has an unusual pattern; it does not prove fraud. "
+    "Do not use this demo to approve, reject, or block real financial transactions."
 )
+st.caption("NEX GUARD | Group 7 | IST 1010F")
+0
